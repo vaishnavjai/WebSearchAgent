@@ -74,4 +74,3 @@ python searchAgent.py
 - Add tests for the search decision heuristics.
 - Add more search integrations and caching for rate limits.
 
-If you'd like, I can add a quick example script that demonstrates an end-to-end query run.
