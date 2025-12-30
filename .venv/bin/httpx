@@ -1,4 +1,4 @@
-#!/home/jv/Desktop/AI_Projects/WebSearchAgent/.venv/bin/python
+#!/home/jv/Desktop/AI_Projects/WebSearchAgent/.venv/bin/python3
 import sys
 from httpx import main
 if __name__ == '__main__':

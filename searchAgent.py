@@ -1,9 +1,11 @@
 import ollama
 import sys_msgs
 import re
-from bs4 import BeautifulSoup
-import requests
+from ddgs import DDGS
 import trafilatura
+from modelSelection import workerModel
+from modelSelection import mainModel
+
 
 assistant_convo = []
 
@@ -11,7 +13,7 @@ assistant_convo = []
 def searchOrNot():
     sys_msg = sys_msgs.search_or_not_msg['content']
     response = ollama.chat(
-        model='llama3.1:8b',
+        model=workerModel,
         messages=[{'role': 'system', 'content': sys_msg}, assistant_convo[-1]]
     )
     print(f"Search or not Response: {response['message']['content'].strip()}")
@@ -25,7 +27,7 @@ def query_generator():
     sys_msg = sys_msgs.query_msg
     query_msg = f'CREATE A DUCKDUCKGO SEARCH QUERY FOR THE FOLLOWING PROMPT: \n{assistant_convo[-1]}'
     response = ollama.chat(
-        model='llama3.1:8b',
+        model=workerModel,
         messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': query_msg}]
     )
     query = response['message']['content'].strip()
@@ -33,27 +35,19 @@ def query_generator():
 
 
 def duckduckgo_search(query):
-    url = f"https://duckduckgo.com/html/?q={query}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-    }
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
+    """Search DuckDuckGo using the official API wrapper."""
     results = []
-    for idx, result in enumerate(soup.find_all('div', class_='result', limit=10)):
-        titleTag = result.find('a', class_='result__a')
-        if not titleTag:
-            continue
-
-        link = titleTag['href']
-        snippetTag = result.find('a', class_='result__snippet')
-        snippet = snippetTag.get_text() if snippetTag else 'No description available.'
-        results.append({
-            'id': idx,
-            'link': link,
-            'search_description': snippet
-        })
+    try:
+        with DDGS() as ddgs:
+            search_results = list(ddgs.text(query, max_results=10))
+            for idx, result in enumerate(search_results):
+                results.append({
+                    'id': idx,
+                    'link': result.get('href', ''),
+                    'search_description': result.get('body', 'No description available.')
+                })
+    except Exception as e:
+        print(f"Search error: {e}")
     return results
 
 
@@ -63,7 +57,7 @@ def best_search_result(s_results, query):
     for _ in range(2):  # Retry up to 2 times
         try:
             response = ollama.chat(
-                model='llama3.1:8b',
+                model=workerModel,
                 messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': best_msg}]
             )
             return int(response['message']['content'].strip())
@@ -85,7 +79,7 @@ def data_validation(search_content, query):
     sys_msg = sys_msgs.contains_data_msg
     needed_msg = f'PAGE_TEXT: "{search_content}" \nUSER_PROMPT: "{assistant_convo[-1]}" \nSEARCH_QUERY: "{query}"'
     response = ollama.chat(
-        model='llama3.1:8b',
+        model=workerModel,
         messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': needed_msg}]
     )
     content = response['message']['content'].strip()
@@ -110,7 +104,12 @@ def ai_search():
 
     while not context_found and len(search_results) > 0:
         print('EVALUATING SEARCH RESULTS...')
+        # Re-index results so the AI model gets correct indices for the current list
+        for idx, result in enumerate(search_results):
+            result['id'] = idx
         best_result_id = best_search_result(s_results=search_results, query=search_query)
+        # Clamp to valid range in case model returns out-of-bounds index
+        best_result_id = max(0, min(best_result_id, len(search_results) - 1))
         try:
             page_link = search_results[best_result_id]['link']
         except (IndexError, KeyError):
@@ -128,7 +127,7 @@ def ai_search():
 
 def stream_assistant_response():
     global assistant_convo
-    responseStream = ollama.chat(model='llama3.1:8b', messages=assistant_convo, stream=True)
+    responseStream = ollama.chat(model=mainModel, messages=assistant_convo, stream=True)
     completeResponse = ''
     print('Assistant:')
 
